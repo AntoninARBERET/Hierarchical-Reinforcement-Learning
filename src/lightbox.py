@@ -81,7 +81,7 @@ class LightBox:
     def get_nb_light(self):
         return len(self.list_light)
     
-    def show_graph(self):
+    def show(self):
         graph = Digraph()
         for l in self.list_light:
             col="lightgrey"
