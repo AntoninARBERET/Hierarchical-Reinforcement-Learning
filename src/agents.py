@@ -19,7 +19,7 @@ class AbstractAgent :
         for act in range(1, env.get_nb_light()+1):
             self.FMDP[act] = {"cpts" : dict(), "parents" : dict()}
             for var in range(1, env.get_nb_light()+1):
-                self.FMDP[act]["cpts"][var] = self.CPTNode(self.FMDP[act], env.get_nb_light())
+                self.FMDP[act]["cpts"][var] = self.CPTNode(self.FMDP[act], var,self)
                 self.FMDP[act]["parents"][var] = []
                 
                 
@@ -78,6 +78,10 @@ class AbstractAgent :
 
     #Update the FMDP
     def update(self, state_t, act, state_t1):
+        current_DBN = self.FMDP[act]
+        for ind in current_DBN["cpts"]:
+            #print("add point in DBN {}, CPT{}".format(act, ind))
+            current_DBN["cpts"][ind].add_datapoint(state_t, act, state_t1)
         print("To implement")
 
         
@@ -119,17 +123,26 @@ class AbstractAgent :
     class CPTNode(NodeMixin):
         
         #constructor
-        def __init__(self, DBN, nb_var, parents = []):
+        def __init__(self, DBN, tree_var, my_agent, parents = None, dataset = None):
+            self.tree_var = tree_var
             self.DBN = DBN
+            self.my_agent = my_agent
             self.var = -1
             self.leaf_distib = 0
             self.BIC = 0
-            self.dataset = []
-            self.nb_var = nb_var
+            if(dataset == None):
+                self.dataset = []
+            else:
+                self.dataset = dataset 
+            if(parents == None):
+                self.parents = []
+            else:
+                self.parents = parents  
+            self.nb_var = my_agent.env.get_nb_light()
             #
             self.distrib_vect = dict() 
-            for i in range(1, nb_var+1):
-                if not i in parents:
+            for i in range(1, self.nb_var+1):
+                if not i in self.parents:
                     self.distrib_vect[i] =[0,0]
         
             #print("TODO CPT node")
@@ -206,10 +219,74 @@ class AbstractAgent :
                         teta_ij1 = N_ij1/(N_ij0+N_ij1)
                         #Add to L in tetas are not 0
                         if(teta_ij0>0 and teta_ij1 >0):
-                            L+=N_ij0 * np.log(teta_ij0) + N_ij1 * np.log(teta_ij1)
+                            #print("i = {} j = {} - >\n\tk = 0 Nijk = {} teta = {}\n\tk = 1 Nijk = {} teta = {}\n\tincrement L of {}".format(i, j, N_ij0, teta_ij0, N_ij1, teta_ij1, N_ij0 * np.log(teta_ij0) + N_ij1 * np.log(teta_ij1)))
+                            L+= (N_ij0 * np.log(teta_ij0) + N_ij1 * np.log(teta_ij1))
                                     
             #finally compute BIC            
             BIC = L - ((self.nb_var)/2 * np.log(len(self.dataset)))
             self.BIC = BIC
             return BIC
+        
+        #BIC Whithout sum on i
+        def compute_BIC_Mono(self):
+            if(len(self.dataset)==0):
+                return 0
+            #Likelihood
+            L=0
+            #create N_ijk
+            N=dict()
+            i=self.tree_var
             
+            #fill N_ijk
+            for d in self.dataset:
+                s_0 = d["s_0"]
+                s_1 = d["s_1"]
+                #get parents(i) state
+                j_state_0=""
+                for j in self.DBN["parents"][i]:
+                    if(s_0[j-1]==False):
+                        j_state_0+="0"
+                    else:
+                        j_state_0+="1"
+                   #get k
+                k=0
+                if(s_1[i-1]==True):
+                    k=1                        
+                #check presence of the j key        
+                if not j_state_0 in N:
+                    N[j_state_0]=[0,0]
+                #increment    
+                N[j_state_0][k]+=1
+            
+            #get the sum
+                for j in N:
+                    #get both N_ijk values
+                    N_ij0 = N[j][0]
+                    N_ij1 = N[j][1]
+                    #teta_ijk = N_ijk/sum_on_k(N_ijk) : probability estimated bu counting
+                    teta_ij0 = N_ij0/(N_ij0+N_ij1)
+                    teta_ij1 = N_ij1/(N_ij0+N_ij1)
+                    #Add to L in tetas are not 0
+                    if(teta_ij0>0 and teta_ij1 >0):
+                        #print("i = {} j = {} - >\n\tk = 0 Nijk = {} teta = {}\n\tk = 1 Nijk = {} teta = {}\n\tincrement L of {}".format(i, j, N_ij0, teta_ij0, N_ij1, teta_ij1, N_ij0 * np.log(teta_ij0) + N_ij1 * np.log(teta_ij1)))
+                        L+= (N_ij0 * np.log(teta_ij0) + N_ij1 * np.log(teta_ij1))
+                                    
+            #finally compute BIC            
+            BIC = L - ((self.nb_var)/2 * np.log(len(self.dataset)))
+            self.BIC = BIC
+            return BIC
+        
+        
+        def try_refinement(self, var):
+            #split dataset on the refinement var
+            dataset_0 = []
+            dataset_1 = []
+            for d in self.dataset:
+                if(d["s_0"][var-1]==0):
+                    dataset_0.append(d)
+                else:
+                    dataset_1.append(d)
+            children_parents = self.parents + [var]        
+            child_0 = type(self)(self.DBN,self.tree_var, self.my_agent, parents = children_parents, dataset =dataset_0) 
+            child_1 = type(self)(self.DBN, self.tree_var, self.my_agent, parents = children_parents, dataset =dataset_1) 
+            print("BIC 0 = {} BIC 1 = {}".format(child_0.compute_BIC_Mono(), child_1.compute_BIC_Mono()))
