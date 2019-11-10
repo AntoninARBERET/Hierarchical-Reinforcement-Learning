@@ -12,7 +12,7 @@ from anytree.node.nodemixin import NodeMixin
 class AbstractAgent :
     
     #Constructor
-    def __init__(self, env):
+    def __init__(self, env, M=50, N=20, K=20):
         #lighbox env
         self.env = env
         
@@ -33,6 +33,9 @@ class AbstractAgent :
         for act in range(1, env.get_nb_light()+1):
             self.actions[act]=self.Action(act, self.env)
             
+        #
+        self.action_to_set = dict()
+            
         #Options
         self.options = dict()
         
@@ -47,6 +50,27 @@ class AbstractAgent :
         
         #iteration
         self.t = 1
+        
+        #Controllable set
+        self.C = []
+        
+        #waiting to get in C
+        self.queue_for_C = []
+        
+        #M step max in an option
+        self.M = M
+        
+        #N execution before considering removing a refinement
+        self.N = N
+        
+        #K minimum nb of datapoint to condider a refinement
+        self.K = K
+    
+    #used to give basicaction of first level to the agent, temporarly
+    def artificial_setup(self):
+        for i in range(1, 10):
+            self.action_to_set[i]=self.actions[i]
+            self.C.append(i)
     
     #string description
     def __str__(self):
@@ -86,17 +110,45 @@ class AbstractAgent :
         current_DBN = self.FMDP[act]
         for ind in current_DBN["cpts"]:
             #print("add point in DBN {}, CPT{}".format(act, ind))
-            current_DBN["cpts"][ind].add_datapoint(state_t, act, state_t1)
-        print("To implement")
+            leaf = current_DBN["cpts"][ind].add_datapoint(state_t, act, state_t1)
+            leaf.compute_BIC_Mono()
+            leaf.try_every_refinements()
         
     #Return solution to set the var to 1 : an option if exists, an action if not
     def get_solution(self, var):
-        print("Implement get solution")
-        return("Solution for {}".format(var))
+        #print("solution for {} asked".format(var))
+        #print("Implement get solution")
+        if(var in self.C):
+            if(var in self.options):
+                return self.options[var]
+            elif(var in self.action_to_set):
+                return self.action_to_set[var]
+        print("No soultion")
+        return(-1)
         
     def create_option(self, var, parents, sig_0):
         return self.Option(self, var, parents, sig_0)
         
+    def set_running_option(self, option):
+        self.current_option(option)
+        
+    #Check if a waiting var can be add to C    
+    def check_update_C(self):
+        #can be far better
+        updated = True
+        while(updated == True):
+            updated=False
+            for o in self.queue_for_C:
+                c = True
+                for p in self.options[o].parents:
+                    if p not in self.C:
+                        c=False
+                if(c):
+
+                    self.queue_for_C.remove(o)
+                    self.C.append(o)
+                    updated=True
+                
         
 #--------INTERNAL CLASSES------------------
         
@@ -113,11 +165,14 @@ class AbstractAgent :
             
         #string description
         def __str__(self):
-            return("A{}".fortmat(self.light_id))
+            return("A{}".format(self.light_id))
         
         #execution
         def execute(self):
             self.env.turn_on(self.light_id)
+        
+        def is_action(self):
+            return True
             
 
 
@@ -130,19 +185,38 @@ class AbstractAgent :
         
         #Constructor : variable associated, sigma_0, list of parent variables
         def __init__(self, my_agent, variable, parents, sig_0):
+            #agent
             self.my_agent = my_agent
+            #variable on which the option should have an effect
             self.variable = variable
+            #parents
+            self.parents = parents
+            #sigma and sigma_0
             self.sig_0 = sig_0
             self.sig = sig_0
+            #nb of execution, used to update sigma
+            self.nb_exec=0
+            #step of the current execution
             self.step = 0
+            #used when called as a nested option
+            self.previous_option = None
+            #True after terminal action
+            self.done = False
+            
             previousNode = None
+            options_called=[]
             #for each parent
             for i in range(len(parents)):
                 #create a Node
                 node = self.OptionTreeNode(parents[i], 1)
                 #set the 0 child
-                child_0 = self.OptionTreeNode(-1, 0, solution = my_agent.get_solution(parents[i]))
+                tmp_solution = my_agent.get_solution(parents[i])
+                child_0 = self.OptionTreeNode(-1, 0, solution = tmp_solution)
                 child_0.parent = node
+                #if solution is option, add to option called
+                #print(tmp_solution)
+                if(not tmp_solution.is_action):
+                    options_called.append(tmp_solution)
                 #check if root
                 if(i==0):
                     self.root=node
@@ -152,28 +226,105 @@ class AbstractAgent :
                     node.parent=previousNode
                 #if last, set the 1 child
                 if(i==len(parents)-1):
-                    child_1 = self.OptionTreeNode(-1, 1, my_agent.get_solution(self.variable))
+                    tmp_solution = my_agent.get_solution(self.variable)
+                    child_1 = self.OptionTreeNode(-1, 1, tmp_solution, is_terminal=True)
                     child_1.parent=node
+                    #if solution is option, add to option called
+                    if(not tmp_solution.is_action):
+                        options_called.append(tmp_solution)
                 previousNode = node
                 
+            #Will probably be removed    
             self.exec_pointer = self.root
+            self.my_agent.options[self.variable] = self
             
+            #check if controllable, add to C or queue_for_C accordingly
+            controllable = True
+            for p in parents:
+                if p not in self.my_agent.C:
+                    print(p)
+                    controllable = False
+            if(controllable):
+                #TODO Check if an option wait for me to be controllable
+                self.my_agent.C.append(self.variable)
+                self.my_agent.check_update_C
+                
+            else:
+                self.my_agent.queue_for_C.append(self.variable)
+                
+            
+                
+            #register myself as caller of nested options    
+            for o in options_called:
+                self.my_agent.options_hierarchies[o].append(self)
+            #init my own caller list    
+            self.my_agent.options_hierarchies[self]=[]
+            
+        def __str__(self):
+            return("O{}".format(self.variable))
+            
+        def next_step(self, state):
+            next_move = self.root
+            self.step+=1
+            #go down in the tree according to the state until the node contain an action or an option
+            while(next_move.solution==None):
+                var = next_move.var
+                if(state[var-1]):
+                    next_move=next_move.children[1]
+                else:
+                    next_move=next_move.children[0]
+                    
+            #find an action, return it    
+            if(next_move.solution.is_action()):
+                if(next_move.is_terminal):
+                    self.done = True
+                return(next_move.solution)
+            #find an option   
+            else:
+                #set the nested option as current one and return the first action
+                next_move.solution.reset()
+                next_move.solution.set_previous(self)
+                my_agent.set_running_option(next_move.solution)
+                return(next_move.solution.next_step())
+            
+        #update sig and go back to the previous option if needed 
+        def update_sig(self, delta):
+            self.nb_exec+=1
+            self.sig=self.sig+((delta-self.sig)/self.nb_exec)
+            if(not (self.previous_option==None)):
+                my_agent.set_running_option(self.previous_option)
+                self.previous_option = None
+
+                
+        #when called as nested option, stock the calling option in previous
+        def set_previous(self, previous_option):
+            self.previous_option = previous_option
         
-            
-        def step(self, state):
-            print("TODO")
-            
+        #reset before a new execution
+        def reset(self):
+            self.step = 0
+            self.exec_pointer = self.root
+            self.done=False
+        
+        #amazing display
         def print_tree(self):
             print("Option {}".format(self.variable))
-            self.root.print_tree()
-            
-            
+            self.root.print_tree()   
+        
+        #used to check if a node contain an option or an action
+        def is_action(self):
+            return False
+        
+        #Internal class for nodes of the policy tree of the option
         class OptionTreeNode(NodeMixin):
-            def __init__(self, var, child_01, solution=None):
+            #Constructor : var of the split (-1 if option/action node), child_01 = 0 or 1, solution = action/option if needed, is_terminal = True for the terminal action node 
+            def __init__(self, var, child_01, solution=None, is_terminal=False):
                 self.var = var
                 self.solution = solution
                 self.child_01 = child_01
+                self.is_terminal = is_terminal
                 
+            #another amazing display   
             def print_tree(self):
                 for pre, _, node in RenderTree(self):
                     treestr = u"%s%s" % (pre, node.var)
@@ -244,6 +395,7 @@ class AbstractAgent :
         def is_leaf(self):
                 return(len(self.children)==0)
             
+        #return the leaf where the point has been added   
         def add_datapoint(self, s_0, act, s_1):
             val_on_s_0 = s_0[self.var-1]
 
@@ -257,14 +409,14 @@ class AbstractAgent :
                         j_val=1
                         
                     self.distrib_vect[j][j_val]+=1
-                #TODO compute BIC 
+                    return(self)
                 
             #if not leaf
             else:
                 if(val_on_s_0==False):
-                    self.children[0].add_datapoint( s_0, act, s_1)
+                    return(self.children[0].add_datapoint( s_0, act, s_1))
                 else:
-                    self.children[1].add_datapoint( s_0, act, s_1)
+                    return(self.children[1].add_datapoint( s_0, act, s_1))
         
         #BIC computation          
         def compute_BIC(self):
@@ -366,7 +518,40 @@ class AbstractAgent :
             self.BIC = BIC
             return BIC
         
+        def try_every_refinements(self):
+            if(len(self.dataset)<self.my_agent.K):
+                return -1
+            refinements = []
+            #for every non-parent variable
+            for var in range(1, self.nb_var+1):
+                if(not var in self.parents_list):
+                    #if refinement, stock it
+                    tmp_refin =self.try_refinement( var)
+                    if(tmp_refin[0]):
+                        refinements.append(tmp_refin)
+                        
+            #if no refinment return -1
+            if(len(refinements)==0):
+                return(-1)
+            
+            max_refin=None
+            max_delta_refin = 0
+            #choose the refinement with the best delta Childrend BICs - BIC
+            for tmp_refin in refinements:
+                if(tmp_refin[2]>max_delta_refin):
+                    max_refin = tmp_refin
+                    max_delta_refin = tmp_refin[2]
+            #create refin
+            (_, var, delta, child_0, child_1) = max_refin
+            child_0.parent = self
+            child_1.parent = self
+            self.var=var
+            self.dataset=[]
+            children_parents = self.parents_list + [var] 
+            #TODO Sigma estimation
+            self.my_agent.create_option(var, children_parents, 0.420)
         
+        #return a tuple (bool, var, delta, child_0, child_1)
         def try_refinement(self, var):
             #split dataset on the refinement var
             dataset_0 = []
@@ -380,14 +565,11 @@ class AbstractAgent :
             child_0 = type(self)(self.DBN,self.tree_var, self.my_agent, parents_list = children_parents, dataset =dataset_0, child_01 = 0) 
             child_1 = type(self)(self.DBN, self.tree_var, self.my_agent, parents_list = children_parents, dataset =dataset_1, child_01 = 1)
             #if children BICs are better
-            if(child_0.compute_BIC_Mono() + child_1.compute_BIC_Mono() > self.compute_BIC_Mono()):
-                #create refin
-                child_0.parent = self
-                child_1.parent = self
-                self.var=var
-                self.dataset=[]
-                #TODO Create Option
-                return True
+            BIC0 = child_0.compute_BIC_Mono()
+            BIC1 = child_1.compute_BIC_Mono()
+            if(BIC0 + BIC1 > self.BIC):
+                
+                return (True, var, BIC0+BIC1-self.BIC, child_0, child_1)
             #no refinement
-            return False
+            return (False, None, None, None ,None)
             
