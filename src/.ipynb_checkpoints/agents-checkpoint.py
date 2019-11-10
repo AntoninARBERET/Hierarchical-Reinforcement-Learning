@@ -1,9 +1,14 @@
 import lightbox
 import numpy as np
-from anytree import Node
+from anytree import Node, RenderTree
 from anytree.node.nodemixin import NodeMixin
 
-#Parent class for local, global and random agents
+#==========================================================================================================
+#============================================ ABSTRACT AGENT ==============================================
+#==========================================================================================================
+
+#Parent of all agents
+
 class AbstractAgent :
     
     #Constructor
@@ -83,11 +88,22 @@ class AbstractAgent :
             #print("add point in DBN {}, CPT{}".format(act, ind))
             current_DBN["cpts"][ind].add_datapoint(state_t, act, state_t1)
         print("To implement")
-
+        
+    #Return solution to set the var to 1 : an option if exists, an action if not
+    def get_solution(self, var):
+        print("Implement get solution")
+        return("Solution for {}".format(var))
+        
+    def create_option(self, var, parents, sig_0):
+        return self.Option(self, var, parents, sig_0)
+        
         
 #--------INTERNAL CLASSES------------------
         
-#--------internal class for actions--------
+#==========================================================================================================
+#===================================== ACTION, internal class==============================================
+#==========================================================================================================
+
     class Action():
         
         #constructor
@@ -103,27 +119,89 @@ class AbstractAgent :
         def execute(self):
             self.env.turn_on(self.light_id)
             
-#--------Internal class for option--------
+
+
+#==========================================================================================================
+#====================================== OPTION, internal class ============================================
+#==========================================================================================================
+
+
     class Option():
         
         #Constructor : variable associated, sigma_0, list of parent variables
         def __init__(self, my_agent, variable, parents, sig_0):
             self.my_agent = my_agent
-            self.varaible = variable
+            self.variable = variable
             self.sig_0 = sig_0
             self.sig = sig_0
-            print("TODO finish option")
-            
-        class OptionTree(NodeMixin):
-            ##Befor next step, chech if accessible for BIC...
-            print("TODO BIC")
+            self.step = 0
+            previousNode = None
+            #for each parent
+            for i in range(len(parents)):
+                #create a Node
+                node = self.OptionTreeNode(parents[i], 1)
+                #set the 0 child
+                child_0 = self.OptionTreeNode(-1, 0, solution = my_agent.get_solution(parents[i]))
+                child_0.parent = node
+                #check if root
+                if(i==0):
+                    self.root=node
+                    node.child_01 = None
+                #if not, link to the parent
+                else:
+                    node.parent=previousNode
+                #if last, set the 1 child
+                if(i==len(parents)-1):
+                    child_1 = self.OptionTreeNode(-1, 1, my_agent.get_solution(self.variable))
+                    child_1.parent=node
+                previousNode = node
+                
+            self.exec_pointer = self.root
             
         
-#--------internal class for CPT nodes-----
+            
+        def step(self, state):
+            print("TODO")
+            
+        def print_tree(self):
+            print("Option {}".format(self.variable))
+            self.root.print_tree()
+            
+            
+        class OptionTreeNode(NodeMixin):
+            def __init__(self, var, child_01, solution=None):
+                self.var = var
+                self.solution = solution
+                self.child_01 = child_01
+                
+            def print_tree(self):
+                for pre, _, node in RenderTree(self):
+                    treestr = u"%s%s" % (pre, node.var)
+                    if(node.is_root):
+                        treestr = u"%s%s" % (pre,node.var)
+                        print(treestr.ljust(8))
+                    else:
+                        if(node.var == -1):
+                            #change when real solution
+                            treestr = u"%s%s" % (pre, "{} [{}]".format(node.solution,node.child_01))
+                        else:    
+                            treestr = u"%s%s" % (pre, "{} [{}]".format(node.var,node.child_01))
+                        print(treestr.ljust(8))
+
+    
+    
+    
+#==========================================================================================================
+#======================================= CPT NODES, internal class ========================================
+#==========================================================================================================
+
+
+
     class CPTNode(NodeMixin):
         
         #constructor
-        def __init__(self, DBN, tree_var, my_agent, parents = None, dataset = None):
+        def __init__(self, DBN, tree_var, my_agent, parents_list = None, dataset = None, child_01= None):
+            self.name="X"
             self.tree_var = tree_var
             self.DBN = DBN
             self.my_agent = my_agent
@@ -134,22 +212,34 @@ class AbstractAgent :
                 self.dataset = []
             else:
                 self.dataset = dataset 
-            if(parents == None):
-                self.parents = []
+            if(parents_list == None):
+                self.parents_list = []
             else:
-                self.parents = parents  
+                self.parents_list = parents_list  
+            self.child_01=child_01
             self.nb_var = my_agent.env.get_nb_light()
             #
             self.distrib_vect = dict() 
             for i in range(1, self.nb_var+1):
-                if not i in self.parents:
+                if not i in self.parents_list:
                     self.distrib_vect[i] =[0,0]
         
             #print("TODO CPT node")
             
         #string description
         def __str__(self):
-            return(super().__str__() + " leaf : {}, datapoints : {}, distrib_vect {}".format(self.is_leaf(), len(self.dataset), self.distrib_vect))
+            return(" leaf : {}, datapoints : {}, distrib_vect {}".format(self.is_leaf(), len(self.dataset), self.distrib_vect))
+        
+        def print_tree(self):
+            for pre, _, node in RenderTree(self):
+                #treestr = u"%s%s" % (pre, node.var)
+                if(node.is_root):
+                    treestr = u"%s%s" % (pre, node.var)
+                    print(treestr.ljust(8))
+                else:
+                    treestr = u"%s%s" % (pre, "-{}-> {}".format(node.child_01,node.var))
+                    print(treestr.ljust(8))
+
             
         def is_leaf(self):
                 return(len(self.children)==0)
@@ -286,7 +376,18 @@ class AbstractAgent :
                     dataset_0.append(d)
                 else:
                     dataset_1.append(d)
-            children_parents = self.parents + [var]        
-            child_0 = type(self)(self.DBN,self.tree_var, self.my_agent, parents = children_parents, dataset =dataset_0) 
-            child_1 = type(self)(self.DBN, self.tree_var, self.my_agent, parents = children_parents, dataset =dataset_1) 
-            print("BIC 0 = {} BIC 1 = {}".format(child_0.compute_BIC_Mono(), child_1.compute_BIC_Mono()))
+            children_parents = self.parents_list + [var]        
+            child_0 = type(self)(self.DBN,self.tree_var, self.my_agent, parents_list = children_parents, dataset =dataset_0, child_01 = 0) 
+            child_1 = type(self)(self.DBN, self.tree_var, self.my_agent, parents_list = children_parents, dataset =dataset_1, child_01 = 1)
+            #if children BICs are better
+            if(child_0.compute_BIC_Mono() + child_1.compute_BIC_Mono() > self.compute_BIC_Mono()):
+                #create refin
+                child_0.parent = self
+                child_1.parent = self
+                self.var=var
+                self.dataset=[]
+                #TODO Create Option
+                return True
+            #no refinement
+            return False
+            
