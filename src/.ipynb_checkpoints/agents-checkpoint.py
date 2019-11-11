@@ -65,6 +65,9 @@ class AbstractAgent :
         
         #K minimum nb of datapoint to condider a refinement
         self.K = K
+        
+        #To be removed later, artificially associate lights to actions
+        self.artificial_setup()
     
     #used to give basicaction of first level to the agent, temporarly
     def artificial_setup(self):
@@ -123,7 +126,7 @@ class AbstractAgent :
                 return self.options[var]
             elif(var in self.action_to_set):
                 return self.action_to_set[var]
-        print("No soultion")
+        print("No soultion for {}".format(var))
         return(-1)
         
     def create_option(self, var, parents, sig_0):
@@ -242,7 +245,7 @@ class AbstractAgent :
             controllable = True
             for p in parents:
                 if p not in self.my_agent.C:
-                    print(p)
+                    #print(p)
                     controllable = False
             if(controllable):
                 #TODO Check if an option wait for me to be controllable
@@ -284,7 +287,7 @@ class AbstractAgent :
                 #set the nested option as current one and return the first action
                 next_move.solution.reset()
                 next_move.solution.set_previous(self)
-                my_agent.set_running_option(next_move.solution)
+                self.my_agent.set_running_option(next_move.solution)
                 return(next_move.solution.next_step())
             
         #update sig and go back to the previous option if needed 
@@ -357,12 +360,18 @@ class AbstractAgent :
             self.DBN = DBN
             self.my_agent = my_agent
             self.var = -1
-            self.leaf_distib = 0
             self.BIC = 0
             if(dataset == None):
                 self.dataset = []
             else:
-                self.dataset = dataset 
+                self.dataset = dataset
+            self.leaf_distrib = 0
+            if(len(self.dataset)>0):
+                for d in self.dataset:
+                    if(d["s_1"][self.tree_var-1]==1):
+                        self.leaf_distrib+=1
+                self.leaf_distrib = self.leaf_distrib / (len(self.dataset))
+            
             if(parents_list == None):
                 self.parents_list = []
             else:
@@ -383,10 +392,17 @@ class AbstractAgent :
         
         def print_tree(self):
             for pre, _, node in RenderTree(self):
-                #treestr = u"%s%s" % (pre, node.var)
-                if(node.is_root):
+                #treestr = u"%s%s" % (pre, node.var)$
+                if(node.is_root and node.is_leaf()):
+                    treestr = u"%s%s" % (pre, "{} {}".format(node.var,node.leaf_distrib))
+                    print(treestr.ljust(8))
+                elif(node.is_root):
                     treestr = u"%s%s" % (pre, node.var)
                     print(treestr.ljust(8))
+                elif(node.is_leaf()):
+                    treestr = u"%s%s" % (pre, "-{}-> {}".format(node.child_01,node.leaf_distrib))
+                    print(treestr.ljust(8))
+                
                 else:
                     treestr = u"%s%s" % (pre, "-{}-> {}".format(node.child_01,node.var))
                     print(treestr.ljust(8))
@@ -402,7 +418,8 @@ class AbstractAgent :
                 
             #if leaf, add to dataset and updat distrib_vect   
             if(self.is_leaf()):
-                self.dataset.append({"s_0" : s_0, "a" : act, "s_1" : s_1})
+                self.leaf_distrib = (self.leaf_distrib*len(self.dataset) + s_1[self.tree_var-1]) / (len(self.dataset) + 1)
+                self.dataset.append({"s_0" : s_0, "a" : act, "s_1" : s_1})    
                 for j in self.distrib_vect:
                     j_val = 0
                     if s_0[j-1]:
@@ -417,6 +434,8 @@ class AbstractAgent :
                     return(self.children[0].add_datapoint( s_0, act, s_1))
                 else:
                     return(self.children[1].add_datapoint( s_0, act, s_1))
+                
+        
         
         #BIC computation          
         def compute_BIC(self):
@@ -538,12 +557,10 @@ class AbstractAgent :
             max_delta_refin = 0
             #choose the refinement with the best delta Childrend BICs - BIC
             for tmp_refin in refinements:
-                print(tmp_refin)
                 if(tmp_refin[2]>max_delta_refin):
                     max_refin = tmp_refin
                     max_delta_refin = tmp_refin[2]
             #create refin
-            print(max_refin)
             (_, var, delta, child_0, child_1) = max_refin
             child_0.parent = self
             child_1.parent = self
