@@ -68,7 +68,7 @@ class AbstractAgent :
     
     #used to give basicaction of first level to the agent, temporarly
     def artificial_setup(self):
-        for i in range(1, 10):
+        for i in range(1, 21):
             self.action_to_set[i]=self.actions[i]
             self.C.append(i)
     
@@ -524,7 +524,7 @@ class AbstractAgent :
             refinements = []
             #for every non-parent variable
             for var in range(1, self.nb_var+1):
-                if(not var in self.parents_list):
+                if(not(var in self.parents_list or var == self.tree_var)):
                     #if refinement, stock it
                     tmp_refin =self.try_refinement( var)
                     if(tmp_refin[0]):
@@ -538,10 +538,12 @@ class AbstractAgent :
             max_delta_refin = 0
             #choose the refinement with the best delta Childrend BICs - BIC
             for tmp_refin in refinements:
+                print(tmp_refin)
                 if(tmp_refin[2]>max_delta_refin):
                     max_refin = tmp_refin
                     max_delta_refin = tmp_refin[2]
             #create refin
+            print(max_refin)
             (_, var, delta, child_0, child_1) = max_refin
             child_0.parent = self
             child_1.parent = self
@@ -549,7 +551,7 @@ class AbstractAgent :
             self.dataset=[]
             children_parents = self.parents_list + [var] 
             #TODO Sigma estimation
-            self.my_agent.create_option(var, children_parents, 0.420)
+            self.my_agent.create_option(self.tree_var, children_parents, 0.420)
         
         #return a tuple (bool, var, delta, child_0, child_1)
         def try_refinement(self, var):
