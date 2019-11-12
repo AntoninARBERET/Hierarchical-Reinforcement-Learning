@@ -2,6 +2,7 @@ import lightbox
 import numpy as np
 from anytree import Node, RenderTree
 from anytree.node.nodemixin import NodeMixin
+from scipy.stats import chi2_contingency
 
 #==========================================================================================================
 #============================================ ABSTRACT AGENT ==============================================
@@ -68,6 +69,9 @@ class AbstractAgent :
         
         #To be removed later, artificially associate lights to actions
         self.artificial_setup()
+        
+        #Inde treshold for chi square TODO pass as parameter
+        self.inde_treshold = 0.995
     
     #used to give basicaction of first level to the agent, temporarly
     def artificial_setup(self):
@@ -116,6 +120,7 @@ class AbstractAgent :
             leaf = current_DBN["cpts"][ind].add_datapoint(state_t, act, state_t1)
             leaf.compute_BIC_Mono()
             leaf.try_every_refinements()
+            current_DBN["cpts"][ind].check_refinements(state_t)
         
     #Return solution to set the var to 1 : an option if exists, an action if not
     def get_solution(self, var):
@@ -592,3 +597,59 @@ class AbstractAgent :
             #no refinement
             return (False, None, None, None ,None)
             
+        #return true if the var of the node is independent from the tree var => refinement not consistent    
+        def chi_2(self):
+            refined_var = self.var
+            desc_dataset = []
+            for desc in self.descendants:
+                desc_dataset = desc_dataset + desc.dataset
+            n_tot=len(desc_dataset)
+            if(n_tot==0):
+                return False
+            #n_ij
+            n=[[0,0],[0,0]]
+            
+            for d in desc_dataset:
+                i=d["s_0"][refined_var-1]
+                j=d["s_1"][self.tree_var-1]
+                n[i][j]+=1
+            if((n[0][0]==0 or n[1][1]==0) and (n[0][1]==0 or n[1][0]==0)):
+                return True
+            chi2 = chi2_contingency(n)
+            independency = chi2[1] > (1-self.my_agent.inde_treshold)
+            #if(independency):
+                #print(chi2)
+            return(independency)
+        
+        def prune(self):
+            desc_dataset=[]
+            for desc in self.descendants:
+                desc_dataset = desc_dataset + desc.dataset
+                #just to be sure
+                del desc
+            
+            self.dataset=desc_dataset
+            if(len(self.dataset)>0):
+                for d in self.dataset:
+                    if(d["s_1"][self.tree_var-1]==1):
+                        self.leaf_distrib+=1
+                self.leaf_distrib = self.leaf_distrib / (len(self.dataset))
+            self.children=[]
+            
+        def check_refinements(self, s_0):
+            val_on_s_0 = s_0[self.var-1] 
+            #if leaf, no refinment 
+            if(self.is_leaf()):
+                return False
+            
+            elif(self.chi_2()):
+                self.prune()
+                return True
+                #TODO Option and things
+                
+            #if not leaf
+            else:
+                if(val_on_s_0==False):
+                    return(self.children[0].check_refinements( s_0))
+                else:
+                    return(self.children[1].check_refinements( s_0))

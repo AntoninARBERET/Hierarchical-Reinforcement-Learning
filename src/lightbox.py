@@ -57,6 +57,11 @@ class LightBox:
         if np.random.random() < 0.1 :
             return
         l = self.list_light[light_id - 1]
+        ##TODO remove later
+        switch_off=False
+        if(l["state"] and switch_off):
+            l["state"]=False
+            return
         #for each dependencies
         for dep in l["dependencies"]:
             #if it's off, shutdown the whole box
