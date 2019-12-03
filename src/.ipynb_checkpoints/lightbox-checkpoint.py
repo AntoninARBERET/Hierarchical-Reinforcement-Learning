@@ -58,7 +58,7 @@ class LightBox:
             return
         l = self.list_light[light_id - 1]
         ##TODO remove later
-        switch_off=False
+        switch_off=True
         if(l["state"] and switch_off):
             l["state"]=False
             return

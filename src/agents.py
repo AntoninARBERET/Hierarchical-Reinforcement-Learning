@@ -20,13 +20,18 @@ class AbstractAgent :
         #agent type
         self.type = "Abstract"
         
-        #FMDP : dict of DBNs which are dict of CPTs initialized to single leafs and dict of parents
+        #FMDP : dict of DBNs which are dict of CPTs initialized to 1 split tree on var and dict of parents
         self.FMDP = dict()
         for act in range(1, env.get_nb_light()+1):
             self.FMDP[act] = {"cpts" : dict(), "parents" : dict()}
             for var in range(1, env.get_nb_light()+1):
                 self.FMDP[act]["cpts"][var] = self.CPTNode(self.FMDP[act], var,self)
                 self.FMDP[act]["parents"][var] = []
+                child_0 = self.CPTNode(self.FMDP[act], var,self, parents_list = [var], child_01= 0)
+                child_1 = self.CPTNode(self.FMDP[act], var,self, parents_list = [var], child_01= 1)
+                child_0.parent = self.FMDP[act]["cpts"][var]
+                child_1.parent = self.FMDP[act]["cpts"][var]
+                self.FMDP[act]["cpts"][var].var=var
                 
                 
         #Actions
@@ -91,7 +96,11 @@ class AbstractAgent :
     #condition to stop the agent
     def stop_condition(self):
         #temporary, for tests
-        if(self.t>10):
+        maxit = 3000
+        perc=self.t/maxit*100
+        if(perc-np.floor(perc)==0):
+            print("{}%".format(perc))
+        if(self.t>maxit):
             return True
         #maybe changed
         return False
@@ -109,12 +118,15 @@ class AbstractAgent :
         
     #Action selection, different for each type of agent
     def selectAction(self, state):
-        print("Not implemented in abstract")
-        return(self.actions[1])
+        #print("Not implemented in abstract")
+        #return(self.actions[np.random.randint(20)+1])
+        return(self.actions[np.random.randint(10)+1])
 
     #Update the FMDP
     def update(self, state_t, act, state_t1):
-        current_DBN = self.FMDP[act]
+        if(isinstance(act,int)):
+            act = self.actions[act]
+        current_DBN = self.FMDP[act.light_id]
         for ind in current_DBN["cpts"]:
             #print("add point in DBN {}, CPT{}".format(act, ind))
             leaf = current_DBN["cpts"][ind].add_datapoint(state_t, act, state_t1)
@@ -123,19 +135,46 @@ class AbstractAgent :
             current_DBN["cpts"][ind].check_refinements(state_t)
         
     #Return solution to set the var to 1 : an option if exists, an action if not
-    def get_solution(self, var):
+    def get_solution(self, var, target_value):
         #print("solution for {} asked".format(var))
         #print("Implement get solution")
         if(var in self.C):
-            if(var in self.options):
-                return self.options[var]
+            if((var, target_value) in self.options):
+                return self.options[(var, target_value)]
             elif(var in self.action_to_set):
                 return self.action_to_set[var]
         print("No soultion for {}".format(var))
         return(-1)
+    
+    def try_option(self, var,target_value, parents, sig_0):
+        if ((var, target_value) in self.options):
+            if self.options[(var, target_value)].sig_0 > sig_0:
+                return False
+        self.create_option(var,target_value, parents, sig_0)
+        return True
         
-    def create_option(self, var, parents, sig_0):
-        return self.Option(self, var, parents, sig_0)
+        
+    def create_option(self, var, target_value, parents, sig_0):
+        return self.Option(self, var, target_value, parents, sig_0)
+    
+    #remove an option and check if an other one can replace it
+    def remove_option(self, var, target_value):
+        self.options.pop((var, target_value), None)
+        for bn in self.FMDP:
+            tree = bn["cpts"][var].children[1-target_value]
+            if not tree.is_leaf():
+                opt_parents = []
+                while(not tree.is_leaf()):
+                    opt_parents.append(tree.var)
+                    tree=tree.children[target_value]
+                    
+                sig=0
+                for d in tree.dataset:
+                    if d["s_1"][self.tree_var] == target_value :
+                        sig+=1
+                sig = sig/len(tree.dataset)
+                self.my_agent.try_option(self.tree_var, target_var, opt_parents, sig)
+                    
         
     def set_running_option(self, option):
         self.current_option(option)
@@ -192,11 +231,13 @@ class AbstractAgent :
     class Option():
         
         #Constructor : variable associated, sigma_0, list of parent variables
-        def __init__(self, my_agent, variable, parents, sig_0):
+        def __init__(self, my_agent, variable, target_value, parents, sig_0):
             #agent
             self.my_agent = my_agent
             #variable on which the option should have an effect
             self.variable = variable
+            #value in which the variable is supposed to be set after the option execution
+            self.target_value = target_value
             #parents
             self.parents = parents
             #sigma and sigma_0
@@ -218,7 +259,7 @@ class AbstractAgent :
                 #create a Node
                 node = self.OptionTreeNode(parents[i], 1)
                 #set the 0 child
-                tmp_solution = my_agent.get_solution(parents[i])
+                tmp_solution = my_agent.get_solution(parents[i], target_value)
                 child_0 = self.OptionTreeNode(-1, 0, solution = tmp_solution)
                 child_0.parent = node
                 #if solution is option, add to option called
@@ -234,7 +275,7 @@ class AbstractAgent :
                     node.parent=previousNode
                 #if last, set the 1 child
                 if(i==len(parents)-1):
-                    tmp_solution = my_agent.get_solution(self.variable)
+                    tmp_solution = my_agent.get_solution(self.variable, target_value)
                     child_1 = self.OptionTreeNode(-1, 1, tmp_solution, is_terminal=True)
                     child_1.parent=node
                     #if solution is option, add to option called
@@ -244,7 +285,7 @@ class AbstractAgent :
                 
             #Will probably be removed    
             self.exec_pointer = self.root
-            self.my_agent.options[self.variable] = self
+            self.my_agent.options[(self.variable, target_value)] = self
             
             #check if controllable, add to C or queue_for_C accordingly
             controllable = True
@@ -255,7 +296,7 @@ class AbstractAgent :
             if(controllable):
                 #TODO Check if an option wait for me to be controllable
                 self.my_agent.C.append(self.variable)
-                self.my_agent.check_update_C
+                self.my_agent.check_update_C()
                 
             else:
                 self.my_agent.queue_for_C.append(self.variable)
@@ -269,7 +310,10 @@ class AbstractAgent :
             self.my_agent.options_hierarchies[self]=[]
             
         def __str__(self):
-            return("O{}".format(self.variable))
+            val="Off"
+            if(self.target_value == 1):
+                val = "On"
+            return("O{} -> {}".format(self.variable, val))
             
         def next_step(self, state):
             next_move = self.root
@@ -316,7 +360,10 @@ class AbstractAgent :
         
         #amazing display
         def print_tree(self):
-            print("Option {}".format(self.variable))
+            val="Off"
+            if(self.target_value == 1):
+                val = "On"
+            print("O{} -> {}".format(self.variable, val))
             self.root.print_tree()   
         
         #used to check if a node contain an option or an action
@@ -443,9 +490,10 @@ class AbstractAgent :
         
         
         #BIC computation          
-        def compute_BIC(self):
+        def compute_BIC_not_used(self):
             if(len(self.dataset)==0):
                 return 0
+            
             #Likelihood
             L=0
             #create N_ijk
@@ -509,7 +557,8 @@ class AbstractAgent :
                 s_1 = d["s_1"]
                 #get parents(i) state
                 j_state_0=""
-                for j in self.DBN["parents"][i]:
+                #for j in self.DBN["parents"][i]:
+                for j in self.parents_list:
                     if(s_0[j-1]==False):
                         j_state_0+="0"
                     else:
@@ -536,7 +585,7 @@ class AbstractAgent :
                     if(teta_ij0>0 and teta_ij1 >0):
                         #print("i = {} j = {} - >\n\tk = 0 Nijk = {} teta = {}\n\tk = 1 Nijk = {} teta = {}\n\tincrement L of {}".format(i, j, N_ij0, teta_ij0, N_ij1, teta_ij1, N_ij0 * np.log(teta_ij0) + N_ij1 * np.log(teta_ij1)))
                         L+= (N_ij0 * np.log(teta_ij0) + N_ij1 * np.log(teta_ij1))
-                                    
+            #print(L)                        
             #finally compute BIC            
             BIC = L - ((self.nb_var)/2 * np.log(len(self.dataset)))
             self.BIC = BIC
@@ -569,11 +618,22 @@ class AbstractAgent :
             (_, var, delta, child_0, child_1) = max_refin
             child_0.parent = self
             child_1.parent = self
+            #to set tree var to the other value
+            target_var = 1 - self.dataset[0]["s_0"][self.tree_var-1]
             self.var=var
             self.dataset=[]
             children_parents = self.parents_list + [var] 
             #TODO Sigma estimation
-            self.my_agent.create_option(self.tree_var, children_parents, 0.420)
+            sig=0
+            for d in self.children[target_var].dataset:
+                if d["s_1"][self.tree_var-1] == target_var :
+                    sig+=1
+            sig = sig/len(child_1.dataset)
+            opt_parents = children_parents.copy()
+            opt_parents.remove(self.tree_var)
+            #print("var : {}, delta : {}".format(var, delta))
+            #self.DBN["cpts"][self.tree_var].print_tree()
+            self.my_agent.try_option(self.tree_var, target_var, opt_parents, sig)
         
         #return a tuple (bool, var, delta, child_0, child_1)
         def try_refinement(self, var):
@@ -585,14 +645,33 @@ class AbstractAgent :
                     dataset_0.append(d)
                 else:
                     dataset_1.append(d)
+            #avoid size 1 dataset because the BIC is 0 (log(1) = 0) and refine every time
+            if(len(dataset_0) == 1 or len(dataset_1)==1):
+                return (False, None, None, None ,None)
             children_parents = self.parents_list + [var]        
             child_0 = type(self)(self.DBN,self.tree_var, self.my_agent, parents_list = children_parents, dataset =dataset_0, child_01 = 0) 
             child_1 = type(self)(self.DBN, self.tree_var, self.my_agent, parents_list = children_parents, dataset =dataset_1, child_01 = 1)
             #if children BICs are better
             BIC0 = child_0.compute_BIC_Mono()
             BIC1 = child_1.compute_BIC_Mono()
-            if(BIC0 + BIC1 > self.BIC):
-                
+            if(BIC0 + BIC1 > self.compute_BIC_Mono()):
+                #print("BIC0 = {}, BIC1 = {}, my BIC = {}, var = {}, tree_var = {}".format(BIC0, BIC1, self.compute_BIC_Mono(),var, self.tree_var))
+                if(False):
+                    print("Dataset parent")
+                    tmpind = 0
+                    for d in self.dataset:
+                        tmpind += 1
+                        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
+                    tmpind = 0
+                    print("Dataset child0")
+                    for d in child_0.dataset:
+                        tmpind += 1
+                        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
+                    tmpind = 0
+                    print("Dataset child1")
+                    for d in child_1.dataset:
+                        tmpind += 1
+                        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
                 return (True, var, BIC0+BIC1-self.BIC, child_0, child_1)
             #no refinement
             return (False, None, None, None ,None)
@@ -642,7 +721,8 @@ class AbstractAgent :
             if(self.is_leaf()):
                 return False
             
-            elif(self.chi_2()):
+            elif(( self.var != self.tree_var ) and self.chi_2()):
+                #print("Prune on DBN : {}, CPT : {}, Node of var : {}".format(self.DBN, self.tree_var, self.var))
                 self.prune()
                 return True
                 #TODO Option and things
