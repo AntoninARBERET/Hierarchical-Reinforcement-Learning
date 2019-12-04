@@ -96,7 +96,7 @@ class AbstractAgent :
     #condition to stop the agent
     def stop_condition(self):
         #temporary, for tests
-        maxit = 3000
+        maxit = 2000
         perc=self.t/maxit*100
         if(perc-np.floor(perc)==0):
             print("{}%".format(perc))
@@ -146,22 +146,37 @@ class AbstractAgent :
         print("No soultion for {}".format(var))
         return(-1)
     
-    def try_option(self, var,target_value, parents, sig_0):
+    def try_option(self, var,target_value, parents, sig_0, opt_root):
         if ((var, target_value) in self.options):
             if self.options[(var, target_value)].sig_0 > sig_0:
                 return False
-        self.create_option(var,target_value, parents, sig_0)
+            self.options[(var, target_value)].opt_root.used=False
+        o=self.create_option(var,target_value, parents, sig_0, opt_root)
+        print("Create: ")
+        o.print_tree()
+        o.opt_root.parent.print_tree()
+        opt_root.used = True
         return True
         
         
-    def create_option(self, var, target_value, parents, sig_0):
-        return self.Option(self, var, target_value, parents, sig_0)
+    def create_option(self, var, target_value, parents, sig_0, opt_root):
+        
+        return self.Option(self, var, target_value, parents, sig_0, opt_root)
     
     #remove an option and check if an other one can replace it
-    def remove_option(self, var, target_value):
+    def remove_and_recreate_option(self, var, target_value):
+        self.options[(var, target_value)].opt_root.used=False
+        if((var, target_value) in self.options):
+            print("remove : ")
+            self.options[(var, target_value)].print_tree()
+        else:
+            print("No option for {} to remove".format((var, target_value)))
         self.options.pop((var, target_value), None)
-        for bn in self.FMDP:
-            tree = bn["cpts"][var].children[1-target_value]
+        return
+        for key in self.FMDP:
+            bn=self.FMDP[key]
+            root = bn["cpts"][var].children[1-target_value]
+            tree=root
             if not tree.is_leaf():
                 opt_parents = []
                 while(not tree.is_leaf()):
@@ -170,11 +185,11 @@ class AbstractAgent :
                     
                 sig=0
                 for d in tree.dataset:
-                    if d["s_1"][self.tree_var] == target_value :
+                    if d["s_1"][var] == target_value :
                         sig+=1
                 sig = sig/len(tree.dataset)
-                self.my_agent.try_option(self.tree_var, target_var, opt_parents, sig)
-                    
+                self.try_option(var, target_value, opt_parents, sig, root)
+                
         
     def set_running_option(self, option):
         self.current_option(option)
@@ -231,7 +246,7 @@ class AbstractAgent :
     class Option():
         
         #Constructor : variable associated, sigma_0, list of parent variables
-        def __init__(self, my_agent, variable, target_value, parents, sig_0):
+        def __init__(self, my_agent, variable, target_value, parents, sig_0, opt_root):
             #agent
             self.my_agent = my_agent
             #variable on which the option should have an effect
@@ -251,6 +266,8 @@ class AbstractAgent :
             self.previous_option = None
             #True after terminal action
             self.done = False
+            
+            self.opt_root = opt_root
             
             previousNode = None
             options_called=[]
@@ -413,6 +430,7 @@ class AbstractAgent :
             self.my_agent = my_agent
             self.var = -1
             self.BIC = 0
+            self.used=False
             if(dataset == None):
                 self.dataset = []
             else:
@@ -633,7 +651,7 @@ class AbstractAgent :
             opt_parents.remove(self.tree_var)
             #print("var : {}, delta : {}".format(var, delta))
             #self.DBN["cpts"][self.tree_var].print_tree()
-            self.my_agent.try_option(self.tree_var, target_var, opt_parents, sig)
+            self.my_agent.try_option(self.tree_var, target_var, opt_parents, sig, self.DBN["cpts"][self.tree_var].children[1-target_var])
         
         #return a tuple (bool, var, delta, child_0, child_1)
         def try_refinement(self, var):
@@ -723,7 +741,17 @@ class AbstractAgent :
             
             elif(( self.var != self.tree_var ) and self.chi_2()):
                 #print("Prune on DBN : {}, CPT : {}, Node of var : {}".format(self.DBN, self.tree_var, self.var))
+                
+                tmp_target = 1-s_0[self.tree_var-1]
+                opt_root = self.DBN["cpts"][self.tree_var].children[1-tmp_target]
+                print("Prune on : {} in : ".format(self.var))
+                opt_root.parent.print_tree()
+                opt_root.print_tree()
+                print(opt_root.used)
                 self.prune()
+                
+                if opt_root.used:
+                    self.my_agent.remove_and_recreate_option(self.tree_var, tmp_target)
                 return True
                 #TODO Option and things
                 
