@@ -1,6 +1,6 @@
 import lightbox
 import numpy as np
-from anytree import Node, RenderTree
+from anytree import Node, RenderTree, LevelOrderIter
 from anytree.node.nodemixin import NodeMixin
 from scipy.stats import chi2_contingency
 
@@ -58,10 +58,10 @@ class AbstractAgent :
         self.t = 1
         
         #Controllable set
-        self.C = []
+        self.C = set()
         
         #waiting to get in C
-        self.queue_for_C = []
+        self.queue_for_C = set()
         
         #M step max in an option
         self.M = M
@@ -77,12 +77,15 @@ class AbstractAgent :
         
         #Inde treshold for chi square TODO pass as parameter
         self.inde_treshold = 0.995
-    
+        
+        #self.artificial_setup()
+        
     #used to give basicaction of first level to the agent, temporarly
     def artificial_setup(self):
         for i in range(1, 21):
             self.action_to_set[i]=self.actions[i]
-            self.C.append(i)
+        for i in range(1, 10):
+            self.C.add(i)
     
     #string description
     def __str__(self):
@@ -96,9 +99,9 @@ class AbstractAgent :
     #condition to stop the agent
     def stop_condition(self):
         #temporary, for tests
-        maxit = 2000
+        maxit = 3000
         perc=self.t/maxit*100
-        if(perc-np.floor(perc)==0):
+        if((perc-np.floor(perc))==0 and np.floor(perc)%5==0):
             print("{}%".format(perc))
         if(self.t>maxit):
             return True
@@ -120,7 +123,9 @@ class AbstractAgent :
     def selectAction(self, state):
         #print("Not implemented in abstract")
         #return(self.actions[np.random.randint(20)+1])
-        return(self.actions[np.random.randint(10)+1])
+        if(np.random.rand()<0.9):
+            return(self.actions[np.random.randint(9)+1])
+        return(self.actions[np.random.randint(6)+10])
 
     #Update the FMDP
     def update(self, state_t, act, state_t1):
@@ -141,9 +146,19 @@ class AbstractAgent :
         if(var in self.C):
             if((var, target_value) in self.options):
                 return self.options[(var, target_value)]
-            elif(var in self.action_to_set):
-                return self.action_to_set[var]
+        if(var in self.action_to_set):
+            return self.action_to_set[var]
+        print(self.action_to_set)
         print("No soultion for {}".format(var))
+        return(-1)
+    
+     #Return Action to set the var to 1 : an option if exists, an action if not
+    def get_action(self, var):
+        #print("solution for {} asked".format(var))
+        #print("Implement get solution")
+        if(var in self.action_to_set):
+            return self.action_to_set[var]
+        print("No action for {}".format(var))
         return(-1)
     
     def try_option(self, var,target_value, parents, sig_0, opt_root):
@@ -151,28 +166,65 @@ class AbstractAgent :
             if self.options[(var, target_value)].sig_0 > sig_0:
                 return False
             self.options[(var, target_value)].opt_root.used=False
+            self.remove(var, target_value)
         o=self.create_option(var,target_value, parents, sig_0, opt_root)
-        print("Create: ")
-        o.print_tree()
-        o.opt_root.parent.print_tree()
+        #print("Create: ")
+        #o.print_tree()
+        #o.opt_root.parent.print_tree()
         opt_root.used = True
         return True
         
         
     def create_option(self, var, target_value, parents, sig_0, opt_root):
         
-        return self.Option(self, var, target_value, parents, sig_0, opt_root)
+        o = self.Option(self, var, target_value, parents, sig_0, opt_root)
+        #check if controllable, add to C or queue_for_C accordingly
+        if self.is_controllable(o.variable):
+            #TODO Check if an option wait for me to be controllable
+                self.C.add(o.variable)
+                self.check_update_C()
+                
+        else:
+            self.queue_for_C.add(o.variable) 
+        return o
     
+    def remove(self, var, target_value):
+        self.options[(var, target_value)].opt_root.used=False
+        #if((var, target_value) in self.options):
+            #print("remove : ")
+            #self.options[(var, target_value)].print_tree()
+        if(not (var, target_value) in self.options):
+            print("No option for {} to remove".format((var, target_value)))
+        removed_o = self.options.pop((var, target_value), None)
+        
+        #remove option from other options hierarchie 
+        for node in LevelOrderIter(removed_o.root):
+            if(isinstance(node.solution, AbstractAgent.Option)):
+                #print("In remove {} -> {} \nTry to remove O{} [{}] of O{} [{}] hierarchie ".format(var,target_value, removed_o.variable,hex(id(removed_o)), node.solution.variable, hex(id(node.solution))))
+                
+                self.options_hierarchies[node.solution].remove(removed_o)
+        
+        #iterating over hierarchy even if it changes size
+        tmp_hierarchy_set = self.options_hierarchies[removed_o].copy()
+        for calling_opt in tmp_hierarchy_set:
+            if(calling_opt in self.options_hierarchies[removed_o]):
+                self.remove(calling_opt.variable, calling_opt.target_value)
+        
+        self.options_hierarchies.pop(removed_o,None)
+        if(var in self.C):
+            self.C.remove(var)
+        if(var in self.queue_for_C):
+            self.queue_for_C.remove(var)
+            
+        #To handle always controllable var, should be removed later
+        if(self.is_controllable(var)):
+            self.C.add(var)
+
     #remove an option and check if an other one can replace it
     def remove_and_recreate_option(self, var, target_value):
-        self.options[(var, target_value)].opt_root.used=False
-        if((var, target_value) in self.options):
-            print("remove : ")
-            self.options[(var, target_value)].print_tree()
-        else:
-            print("No option for {} to remove".format((var, target_value)))
-        self.options.pop((var, target_value), None)
-        return
+        
+        self.remove(var, target_value)
+        
         for key in self.FMDP:
             bn=self.FMDP[key]
             root = bn["cpts"][var].children[1-target_value]
@@ -194,21 +246,38 @@ class AbstractAgent :
     def set_running_option(self, option):
         self.current_option(option)
         
+    def is_controllable(self, var):
+        #should be removed later
+        if var in [1,2,3,4,5,6,7,8,9]:
+            return True
+        
+        #if(not (var, 0) in self.options):
+        #    return False
+        #O_off = self.options[(var, 0)]
+        
+        if(not (var, 1) in self.options):
+            return False
+        O_on = self.options[(var, 1)]
+        
+        for p in O_on.parents:
+            if p not in self.C:
+                return False
+            
+        #for p in O_off.parents:
+        #    if p not in self.C:
+        #        return False
+        return True
+    
+    
     #Check if a waiting var can be add to C    
     def check_update_C(self):
-        #can be far better
         updated = True
         while(updated == True):
             updated=False
-            for o in self.queue_for_C:
-                c = True
-                for p in self.options[o].parents:
-                    if p not in self.C:
-                        c=False
-                if(c):
-
-                    self.queue_for_C.remove(o)
-                    self.C.append(o)
+            for var in self.queue_for_C:
+                if(self.is_controllable(var)):
+                    self.queue_for_C.remove(var)
+                    self.C.add(var)
                     updated=True
                 
         
@@ -277,8 +346,17 @@ class AbstractAgent :
                 node = self.OptionTreeNode(parents[i], 1)
                 #set the 0 child
                 tmp_solution = my_agent.get_solution(parents[i], target_value)
-                child_0 = self.OptionTreeNode(-1, 0, solution = tmp_solution)
-                child_0.parent = node
+                if(isinstance(tmp_solution, AbstractAgent.Option)):
+                    #if(tmp_solution.check_if_call(self, [])):#wtf
+                        
+                        #tmp_solution = get_action(self.variable)
+                    #else:
+                    my_agent.options_hierarchies[tmp_solution].add(self)
+                if(target_value == 1):
+                    child_0 = self.OptionTreeNode(-1, 0, solution = tmp_solution)
+                    child_0.parent = node
+                else:
+                    child_1 = self.OptionTreeNode(-1, 1, solution = tmp_solution)
                 #if solution is option, add to option called
                 #print(tmp_solution)
                 if(not tmp_solution.is_action):
@@ -292,39 +370,31 @@ class AbstractAgent :
                     node.parent=previousNode
                 #if last, set the 1 child
                 if(i==len(parents)-1):
-                    tmp_solution = my_agent.get_solution(self.variable, target_value)
-                    child_1 = self.OptionTreeNode(-1, 1, tmp_solution, is_terminal=True)
-                    child_1.parent=node
+                    tmp_solution = my_agent.get_action(self.variable)
+                    if(target_value == 1):
+                        child_1 = self.OptionTreeNode(-1, 1, tmp_solution, is_terminal=True)
+                        child_1.parent=node
+                    else:
+                        child_0 = self.OptionTreeNode(-1, 0, tmp_solution, is_terminal=True)
+                        child_0.parent=node
                     #if solution is option, add to option called
                     if(not tmp_solution.is_action):
                         options_called.append(tmp_solution)
+                if(target_value == 0):
+                    child_1.parent = node
                 previousNode = node
                 
             #Will probably be removed    
             self.exec_pointer = self.root
             self.my_agent.options[(self.variable, target_value)] = self
             
-            #check if controllable, add to C or queue_for_C accordingly
-            controllable = True
-            for p in parents:
-                if p not in self.my_agent.C:
-                    #print(p)
-                    controllable = False
-            if(controllable):
-                #TODO Check if an option wait for me to be controllable
-                self.my_agent.C.append(self.variable)
-                self.my_agent.check_update_C()
-                
-            else:
-                self.my_agent.queue_for_C.append(self.variable)
-                
             
                 
             #register myself as caller of nested options    
             for o in options_called:
                 self.my_agent.options_hierarchies[o].append(self)
             #init my own caller list    
-            self.my_agent.options_hierarchies[self]=[]
+            self.my_agent.options_hierarchies[self]=set()
             
         def __str__(self):
             val="Off"
@@ -364,7 +434,17 @@ class AbstractAgent :
                 my_agent.set_running_option(self.previous_option)
                 self.previous_option = None
 
-                
+        #Check if this option call opt
+        def check_if_call(self, opt, visited):
+            if(self in self.my_agent.options_hierarchies[opt]):
+                return True
+            new_visited = visited + [self]
+            for node in LevelOrderIter(self.root):
+                if(isinstance(node.solution, AbstractAgent.Option) and not (node.solution in visited)):
+                    if(node.solution.check_if_call(opt, new_visited)):
+                        return True
+            return False
+        
         #when called as nested option, stock the calling option in previous
         def set_previous(self, previous_option):
             self.previous_option = previous_option
@@ -674,22 +754,22 @@ class AbstractAgent :
             BIC1 = child_1.compute_BIC_Mono()
             if(BIC0 + BIC1 > self.compute_BIC_Mono()):
                 #print("BIC0 = {}, BIC1 = {}, my BIC = {}, var = {}, tree_var = {}".format(BIC0, BIC1, self.compute_BIC_Mono(),var, self.tree_var))
-                if(False):
-                    print("Dataset parent")
-                    tmpind = 0
-                    for d in self.dataset:
-                        tmpind += 1
-                        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
-                    tmpind = 0
-                    print("Dataset child0")
-                    for d in child_0.dataset:
-                        tmpind += 1
-                        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
-                    tmpind = 0
-                    print("Dataset child1")
-                    for d in child_1.dataset:
-                        tmpind += 1
-                        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
+                #if(False):
+                #    print("Dataset parent")
+                #    tmpind = 0
+                #    for d in self.dataset:
+                #        tmpind += 1
+                #        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
+                #    tmpind = 0
+                #    print("Dataset child0")
+                #    for d in child_0.dataset:
+                #        tmpind += 1
+                #        print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
+                #    tmpind = 0
+                ##    print("Dataset child1")
+                 #   for d in child_1.dataset:
+                 #       tmpind += 1
+                 #       print("{} : {} ; {}".format(tmpind,d["s_0"],d["s_1"]))
                 return (True, var, BIC0+BIC1-self.BIC, child_0, child_1)
             #no refinement
             return (False, None, None, None ,None)
@@ -744,10 +824,10 @@ class AbstractAgent :
                 
                 tmp_target = 1-s_0[self.tree_var-1]
                 opt_root = self.DBN["cpts"][self.tree_var].children[1-tmp_target]
-                print("Prune on : {} in : ".format(self.var))
-                opt_root.parent.print_tree()
-                opt_root.print_tree()
-                print(opt_root.used)
+                #print("Prune on : {} in : ".format(self.var))
+                #opt_root.parent.print_tree()
+                #opt_root.print_tree()
+                #print(opt_root.used)
                 self.prune()
                 
                 if opt_root.used:
