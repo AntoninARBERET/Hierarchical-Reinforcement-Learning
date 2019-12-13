@@ -21,6 +21,7 @@ class LightBox:
             
         self.nb_level = len(light_by_lvl)
         self.list_light = []
+        self.dependencies = dependencies
         currentLvl = 1
         indNextLevel = light_by_lvl[0]
         for i in range(len(dependencies)):
@@ -99,3 +100,20 @@ class LightBox:
                 e="{}{}".format(l["id"],dep)
                 graph.edge("{}".format(dep), "{}".format(l["id"]))
         return graph
+    
+    def count_refin(self):
+        n_self_dep = self.get_nb_light()**2
+        n_dep = 0
+        n_co_parent = 0
+        
+        print(self.list_light)
+        for i in self.list_light:
+            print(i)
+            dep = i["dependencies"]
+            print(dep)
+            n_dep+=len(dep)
+            for j in self.list_light:
+                if i["id"] in j["dependencies"]:
+                    n_co_parent+=len(j["dependencies"])
+                
+        print("{} refinements due to self dependencies \n{} refinements due to dependecies\n{} refinements due to co parenting".format(n_self_dep, n_dep, n_co_parent))

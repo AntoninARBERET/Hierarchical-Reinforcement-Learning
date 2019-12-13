@@ -576,7 +576,7 @@ class AbstractAgent :
                         j_val=1
                         
                     self.distrib_vect[j][j_val]+=1
-                    return(self)
+                return(self)
                 
             #if not leaf
             else:
@@ -584,7 +584,69 @@ class AbstractAgent :
                     return(self.children[0].add_datapoint( s_0, act, s_1))
                 else:
                     return(self.children[1].add_datapoint( s_0, act, s_1))
+        
+        #recreate distribution vectore, used on splits and prunes
+        def recalculate_distrib_vect(self):
+            self.distrib_vect = dict() 
+            for i in range(1, self.nb_var+1):
+                if not i in self.parents_list:
+                    self.distrib_vect[i] =[0,0]
+            for i in range(1, self.nb_var+1):
+                if not i in self.parents_list:
+                    for d in self.dataset:
+                        i_val = 0
+                        if d["s_0"][i-1]:
+                            i_val=1
+                        self.distrib_vect[i][i_val]+=1
+                        
+        #Shannon's entropy over a distribution vector            
+        def shannon(self, vect):
+            tot = 0
+            h = 0
+            
+            for x in vect:
+                tot+=x
+            for x in vect:
+                if(x>0):
+                    h-= (x/tot) * np.log(x/tot)
+            return h
+        
+        def entropy(self):
+            h=0
+            for v in self.distrib_vect:
+                h+=self.shannon(self.distrib_vect[v])
+            return h
+        
+        #calculate entropy gain in this node if the action is executed in the given state and
+        #the datapoint goes in this dataset
+        def entropy_gain(self, state):
+            h0 = self.entropy()
+            
+            h1=0
+            for v in self.distrib_vect:
+                tmp_v = self.distrib_vect[v].copy()
+                if(state[v-1]==True):
+                    tmp_v[1]+=1
+                else:
+                    tmp_v[0]+=1
+                h1+=self.shannon(tmp_v)
+            return h1 - h0 
+        
+        #go down in the tree to find the dataset in which state goes and return the entropie gain
+        def tree_entropy_gain(self, state):
+            val_on_s_0 = state[self.var-1]
+
                 
+            #if leaf, return gain 
+            if(self.is_leaf()):
+                return(self.entropy_gain(state))
+                
+            #if not leaf
+            else:
+                if(val_on_s_0==False):
+                    return(self.children[0].tree_entropy_gain(state))
+                else:
+                    return(self.children[1].tree_entropy_gain(state))
         
         
         #BIC computation          
@@ -731,6 +793,8 @@ class AbstractAgent :
             opt_parents.remove(self.tree_var)
             #print("var : {}, delta : {}".format(var, delta))
             #self.DBN["cpts"][self.tree_var].print_tree()
+            child_0.recalculate_distrib_vect()
+            child_1.recalculate_distrib_vect()
             self.my_agent.try_option(self.tree_var, target_var, opt_parents, sig, self.DBN["cpts"][self.tree_var].children[1-target_var])
         
         #return a tuple (bool, var, delta, child_0, child_1)
@@ -812,6 +876,7 @@ class AbstractAgent :
                         self.leaf_distrib+=1
                 self.leaf_distrib = self.leaf_distrib / (len(self.dataset))
             self.children=[]
+            self.recalculate_distrib_vect()
             
         def check_refinements(self, s_0):
             val_on_s_0 = s_0[self.var-1] 
