@@ -23,7 +23,7 @@ class AbstractAgent :
         #FMDP : dict of DBNs which are dict of CPTs initialized to 1 split tree on var and dict of parents
         self.FMDP = dict()
         for act in range(1, env.get_nb_light()+1):
-            self.FMDP[act] = {"cpts" : dict(), "parents" : dict()}
+            self.FMDP[act] = {"cpts" : dict(), "parents" : dict(), "action" : act}
             for var in range(1, env.get_nb_light()+1):
                 self.FMDP[act]["cpts"][var] = self.CPTNode(self.FMDP[act], var,self)
                 self.FMDP[act]["parents"][var] = []
@@ -80,6 +80,9 @@ class AbstractAgent :
         
         #self.artificial_setup()
         
+        self.refin = set()
+        
+        
     #used to give basicaction of first level to the agent, temporarly
     def artificial_setup(self):
         for i in range(1, 21):
@@ -99,10 +102,11 @@ class AbstractAgent :
     #condition to stop the agent
     def stop_condition(self):
         #temporary, for tests
-        maxit = 3000
+        maxit = 20000
+        update_freq = 2
         perc=self.t/maxit*100
-        if((perc-np.floor(perc))==0 and np.floor(perc)%5==0):
-            print("{}%".format(perc))
+        if((perc-np.floor(perc))==0 and np.floor(perc)%update_freq==0):
+            print("{}% - {} correct refinements".format(perc, self.count_correct_refinements()))
         if(self.t>maxit):
             return True
         #maybe changed
@@ -187,6 +191,22 @@ class AbstractAgent :
         else:
             self.queue_for_C.add(o.variable) 
         return o
+    
+    #add a refinement in the set
+    def add_refin(self, tree_var, refin_var):
+        self.refin.add((tree_var, refin_var))
+        
+    def remove_refin(self, tree_var, refin_var):
+        if((tree_var, refin_var) in self.refin):
+            self.refin.remove((tree_var, refin_var))
+        
+    def count_correct_refinements(self):
+        n_ref=0
+        for r in self.env.refin:
+            if r in self.refin:
+                n_ref +=1
+        return n_ref
+
     
     def remove(self, var, target_value):
         self.options[(var, target_value)].opt_root.used=False
@@ -795,6 +815,9 @@ class AbstractAgent :
             #self.DBN["cpts"][self.tree_var].print_tree()
             child_0.recalculate_distrib_vect()
             child_1.recalculate_distrib_vect()
+            #create a refinment in the agent "correct refinement set" only if target_var = 1 and DBN["var"] = tree_var
+            if(self.DBN["action"] == self.tree_var and target_var == 1):
+                self.my_agent.add_refin(self.tree_var, var)
             self.my_agent.try_option(self.tree_var, target_var, opt_parents, sig, self.DBN["cpts"][self.tree_var].children[1-target_var])
         
         #return a tuple (bool, var, delta, child_0, child_1)
@@ -864,11 +887,30 @@ class AbstractAgent :
         
         def prune(self):
             desc_dataset=[]
+            tmp_node = self
+            tmp_prec_node = None
+            target_value = 0
+            while(not tmp_node.parent == None):
+                tmp_prec_node = tmp_node
+                tmp_node = tmp_node.parent
+            #print("tmp_prec_node : {}".format(tmp_prec_node))
+            #print("tmp_node.children[1] : {}".format(tmp_node.children[1]))
+            if(tmp_node.children[0]==tmp_prec_node):
+                target_value = 1
+
+        
             for desc in self.descendants:
                 desc_dataset = desc_dataset + desc.dataset
+                
+                #remove refin from refin set in agent
+                #if(target_value==1):
+                    #print(target_value)
+                if(desc.DBN["action"] == desc.tree_var and target_value == 1):
+                    #print("Remove ref ({},{})".format(desc.tree_var, desc.var))
+                    self.my_agent.remove_refin(desc.tree_var, desc.var)
                 #just to be sure
                 del desc
-            
+                
             self.dataset=desc_dataset
             if(len(self.dataset)>0):
                 for d in self.dataset:

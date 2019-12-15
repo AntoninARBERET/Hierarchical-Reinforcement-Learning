@@ -34,6 +34,13 @@ class LightBox:
             light["dependencies"]=dependencies[i]
             light["state"]=False
             self.list_light.append(light)
+        
+        #create set of refinement possible. (i,j) sur as i tree should be refined on j depend on j
+        self.refin = set()
+        for i in self.list_light:
+            dep = i["dependencies"]
+            for j in dep:
+                self.refin.add((i["id"],j))
             
     def __str__(self):
         currentLvl=1
@@ -117,3 +124,5 @@ class LightBox:
                     n_co_parent+=len(j["dependencies"])
                 
         print("{} refinements due to self dependencies \n{} refinements due to dependecies\n{} refinements due to co parenting".format(n_self_dep, n_dep, n_co_parent))
+        
+    
