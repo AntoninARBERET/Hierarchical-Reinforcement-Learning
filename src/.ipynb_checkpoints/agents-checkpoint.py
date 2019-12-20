@@ -2,7 +2,12 @@ import lightbox
 import numpy as np
 from anytree import Node, RenderTree, LevelOrderIter
 from anytree.node.nodemixin import NodeMixin
-from scipy.stats import chi2_contingency
+from scipy.stats import chi2_contingency, entropy
+import math
+import time
+import os.path
+from os import path
+
 
 #==========================================================================================================
 #============================================ ABSTRACT AGENT ==============================================
@@ -13,12 +18,12 @@ from scipy.stats import chi2_contingency
 class AbstractAgent :
     
     #Constructor
-    def __init__(self, env, M=50, N=20, K=20):
+    def __init__(self, env, M=50, N=20, K=20, epsilon=0.1, experiment_id = None, data_path=None, agent_type="Abstract"):
         #lighbox env
         self.env = env
         
         #agent type
-        self.type = "Abstract"
+        self.type = agent_type
         
         #FMDP : dict of DBNs which are dict of CPTs initialized to 1 split tree on var and dict of parents
         self.FMDP = dict()
@@ -54,6 +59,12 @@ class AbstractAgent :
         #current option
         self.current_option = None
         
+        #current plan
+        self.current_plan=None
+        
+        #pointer on current option in plan
+        self.plan_ptr=-1
+        
         #iteration
         self.t = 1
         
@@ -72,6 +83,9 @@ class AbstractAgent :
         #K minimum nb of datapoint to condider a refinement
         self.K = K
         
+        #epsilon : exploration parameter in action selectino
+        self.epsilon = epsilon
+        
         #To be removed later, artificially associate lights to actions
         self.artificial_setup()
         
@@ -81,13 +95,34 @@ class AbstractAgent :
         #self.artificial_setup()
         
         self.refin = set()
+
+        self.timing = False
         
+        self.start_time = None
         
+        self.print_entropies = False
+        
+        self.experiment_id = experiment_id
+        
+        self.data_path=data_path
+        
+        if(not self.experiment_id == None):
+            if(path.exists(self.data_path+self.experiment_id+"/"+self.type)):
+                print("Experiment already exists ! No folder created, this agent will crash ! \nYou must change the experiment_id.")
+            else:
+                os.makedirs(self.data_path+self.experiment_id+"/"+self.type)
+                self.my_dir = self.data_path+self.experiment_id+"/"+self.type
+                self.iter_array = np.array([0], dtype=np.int64)
+                self.time_array = np.array([0])
+                self.refin_array = np.array([0], dtype=np.int64)
+            
+        self.writting_period = 200
+            
     #used to give basicaction of first level to the agent, temporarly
     def artificial_setup(self):
-        for i in range(1, 21):
+        for i in range(1, self.env.get_nb_light()+1):
             self.action_to_set[i]=self.actions[i]
-        for i in range(1, 10):
+        for i in range(1, self.env.light_by_lvl[0]+1):
             self.C.add(i)
     
     #string description
@@ -96,6 +131,8 @@ class AbstractAgent :
     
     #launch the agent
     def start(self):
+        if(self.start_time==None):
+            self.start_time = time.time()
         while(not self.stop_condition()):
             self.behaviour()
     
@@ -103,10 +140,19 @@ class AbstractAgent :
     def stop_condition(self):
         #temporary, for tests
         maxit = 20000
-        update_freq = 2
+        update_freq = 1
         perc=self.t/maxit*100
         if((perc-np.floor(perc))==0 and np.floor(perc)%update_freq==0):
-            print("{}% - {} correct refinements".format(perc, self.count_correct_refinements()))
+            #print("=========================================================")
+            print("{}% - {} correct refinements \t ".format(perc, self.count_correct_refinements()))
+            if(self.timing):
+                d=time.time()-self.start_time
+                h = d//3600
+                r=d%3600
+                m = r//60
+                s=r%60
+                print("Running for {} hours, {} minutes, {} seconds".format(h,m,s))
+            #print("=========================================================")
         if(self.t>maxit):
             return True
         #maybe changed
@@ -122,6 +168,8 @@ class AbstractAgent :
         self.update(self.state_t, act, state_t1)
         self.state_t = state_t1
         self.t+=1
+        if(self.t%self.writting_period==0):
+            self.write_data()
         
     #Action selection, different for each type of agent
     def selectAction(self, state):
@@ -147,6 +195,8 @@ class AbstractAgent :
     def get_solution(self, var, target_value):
         #print("solution for {} asked".format(var))
         #print("Implement get solution")
+        if(target_value==0):
+            return self.action_to_set[var]
         if(var in self.C):
             if((var, target_value) in self.options):
                 return self.options[(var, target_value)]
@@ -178,7 +228,7 @@ class AbstractAgent :
         opt_root.used = True
         return True
         
-        
+    
     def create_option(self, var, target_value, parents, sig_0, opt_root):
         
         o = self.Option(self, var, target_value, parents, sig_0, opt_root)
@@ -264,11 +314,11 @@ class AbstractAgent :
                 
         
     def set_running_option(self, option):
-        self.current_option(option)
+        self.current_option = option
         
     def is_controllable(self, var):
         #should be removed later
-        if var in [1,2,3,4,5,6,7,8,9]:
+        if var in range(self.env.light_by_lvl[0]+1):
             return True
         
         #if(not (var, 0) in self.options):
@@ -294,12 +344,28 @@ class AbstractAgent :
         updated = True
         while(updated == True):
             updated=False
+            to_remove = []
             for var in self.queue_for_C:
                 if(self.is_controllable(var)):
-                    self.queue_for_C.remove(var)
+                    to_remove.append(var)
                     self.C.add(var)
                     updated=True
+                    
+            for var in to_remove:
+                self.queue_for_C.remove(var)
                 
+    def write_data(self):
+        if(self.experiment_id == None):
+            print("No experiment")
+            return
+        self.iter_array=np.append(self.iter_array, self.t)
+        self.refin_array=np.append(self.refin_array, self.count_correct_refinements())
+        self.time_array=np.append(self.time_array, time.time()-self.start_time)
+        
+        np.savetxt(self.my_dir+"/iterations", self.iter_array)
+        np.savetxt(self.my_dir+"/refinements", self.refin_array)
+        np.savetxt(self.my_dir+"/time", self.time_array)
+        
         
 #--------INTERNAL CLASSES------------------
         
@@ -444,14 +510,14 @@ class AbstractAgent :
                 next_move.solution.reset()
                 next_move.solution.set_previous(self)
                 self.my_agent.set_running_option(next_move.solution)
-                return(next_move.solution.next_step())
+                return(next_move.solution.next_step(state))
             
         #update sig and go back to the previous option if needed 
         def update_sig(self, delta):
             self.nb_exec+=1
             self.sig=self.sig+((delta-self.sig)/self.nb_exec)
             if(not (self.previous_option==None)):
-                my_agent.set_running_option(self.previous_option)
+                self.my_agent.set_running_option(self.previous_option)
                 self.previous_option = None
 
         #Check if this option call opt
@@ -621,16 +687,20 @@ class AbstractAgent :
                         
         #Shannon's entropy over a distribution vector            
         def shannon(self, vect):
-            tot = 0
-            h = 0
+            #tot = 0
+            #h = 0
             
-            for x in vect:
-                tot+=x
-            for x in vect:
-                if(x>0):
-                    h-= (x/tot) * np.log(x/tot)
-            return h
-        
+            #for x in vect:
+            #    tot+=x
+            #for x in vect:
+            #    if(x>0):
+            #        h-= (x/tot) * np.log(x/tot)
+            #return h
+            h = entropy(vect, base=2 )
+            #if(math.isnan(h)):
+            #    h=0
+            return(h)
+            
         def entropy(self):
             h=0
             for v in self.distrib_vect:
@@ -639,7 +709,7 @@ class AbstractAgent :
         
         #calculate entropy gain in this node if the action is executed in the given state and
         #the datapoint goes in this dataset
-        def entropy_gain(self, state):
+        def entropy_gain_old(self, state):
             h0 = self.entropy()
             
             h1=0
@@ -652,6 +722,20 @@ class AbstractAgent :
                 h1+=self.shannon(tmp_v)
             return h1 - h0 
         
+        def entropy_gain(self, state):
+            max_G = -1
+            for v in self.distrib_vect:
+                tmp_v = self.distrib_vect[v].copy()
+                if(state[v-1]==True):
+                    tmp_v[1]+=1
+                else:
+                    tmp_v[0]+=1
+                G = self.shannon(tmp_v) - self.shannon(self.distrib_vect[v])
+                if(math.isnan(G) or G>max_G):
+                    max_G=G
+            return max_G
+        
+                
         #go down in the tree to find the dataset in which state goes and return the entropie gain
         def tree_entropy_gain(self, state):
             val_on_s_0 = state[self.var-1]

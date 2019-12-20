@@ -18,7 +18,8 @@ class LightBox:
             print("You must give both light_by_lvl and dependencies argument, or no one but you can't give one. Creating default lightbox.")
             light_by_lvl = [9,6,4,1]
             dependencies = [[],[],[],[],[],[],[],[],[],[1,4,7],[2,5],[3,6],[2,3],[5,6],[7,8],[10,11],[11,12],[13,14],[14,15],[17,18]]
-            
+        
+        self.light_by_lvl = light_by_lvl
         self.nb_level = len(light_by_lvl)
         self.list_light = []
         self.dependencies = dependencies
@@ -35,6 +36,7 @@ class LightBox:
             light["state"]=False
             self.list_light.append(light)
         
+        #create set of refinement possible. (i,j) sur as i tree should be refined on j depend on j
         self.refin = set()
         for i in self.list_light:
             dep = i["dependencies"]
