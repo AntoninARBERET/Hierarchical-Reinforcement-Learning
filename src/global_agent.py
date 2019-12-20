@@ -7,7 +7,7 @@ class GlobalAgent(AbstractAgent):
     def __init__(self, env, M=50, N=20, K=20, epsilon=0.1, experiment_id = None, data_path=None):
         AbstractAgent.__init__(self, env, M, N, K, epsilon, experiment_id, data_path, "Global")
     
-    #action selection
+    #return the next action to do in order to reach a state and execute an interesting action there
     def selectAction(self, state):
         #an option is running
         if not self.current_option == None:
