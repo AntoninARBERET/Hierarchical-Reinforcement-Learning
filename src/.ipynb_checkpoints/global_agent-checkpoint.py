@@ -6,7 +6,8 @@ class GlobalAgent(AbstractAgent):
     
     def __init__(self, env, M=50, N=20, K=20, epsilon=0.1, experiment_id = None, data_path=None):
         AbstractAgent.__init__(self, env, M, N, K, epsilon, experiment_id, data_path, "Global")
-        
+    
+    #action selection
     def selectAction(self, state):
         #an option is running
         if not self.current_option == None:
@@ -74,6 +75,7 @@ class GlobalAgent(AbstractAgent):
         return(max_act)
 
     
+    #generate every reachable state with controllable variable from given state
     def generate_rechable_states(self, state):
         reachable = []
         prod = list(product([False,True],repeat=len(self.C)))
@@ -89,6 +91,7 @@ class GlobalAgent(AbstractAgent):
             
         return(reachable)
     
+    #return the best action in the state, which is the one with the best entropy gain
     def best_state_action(self, state):
                 
         reachable_states = self.generate_rechable_states(state)
@@ -129,7 +132,8 @@ class GlobalAgent(AbstractAgent):
             print(max_G)    
         return((max_state, max_act))
         
-        
+    
+    #create a plan to reach the state and execute the action
     def compute_plan(self, state):
         (s_target,a) = self.best_state_action(state)
         to_set =[]

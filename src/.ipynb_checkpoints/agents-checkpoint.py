@@ -102,8 +102,10 @@ class AbstractAgent :
         
         self.print_entropies = False
         
+        #if not None, the agent will write the evolution of refinement in a file
         self.experiment_id = experiment_id
         
+        #path to the data directory
         self.data_path=data_path
         
         if(not self.experiment_id == None):
